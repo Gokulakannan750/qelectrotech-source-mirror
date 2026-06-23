@@ -147,6 +147,7 @@ target_include_directories(
     ${QET_DIR}/sources/print
     ${QET_DIR}/sources/svg
     ${QET_DIR}/sources/custom/wirecatalogue
+    ${QET_DIR}/sources/custom/designation
 )
 
 install(TARGETS ${PROJECT_NAME})

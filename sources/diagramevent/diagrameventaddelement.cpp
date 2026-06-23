@@ -25,6 +25,7 @@
 #include "../qetdiagrameditor.h"
 #include "../qetgraphicsitem/element.h"
 #include "../qetgraphicsitem/conductor.h"
+#include "../custom/designation/designationmanager.h"
 
 /**
 	@brief DiagramEventAddElement::DiagramEventAddElement
@@ -273,5 +274,7 @@ void DiagramEventAddElement::addElement()
 
 	m_diagram -> undoStack().push(undo_object);
 	element->setUpFormula();
+	// Custom (Trovo Tech): auto-assign IEC 81346 designation (prefix + number).
+	DesignationManager::assignToElement(element);
 	element->freezeNewAddedElement();
 }
