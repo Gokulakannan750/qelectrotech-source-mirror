@@ -20,6 +20,12 @@
 
 #include <QString>
 #include <QSet>
+#include <QMap>
+#include <QList>
+#include <QPair>
+#include <QPointer>
+
+#include "../../diagramcontext.h"
 
 class Element;
 class QETProject;
@@ -50,6 +56,18 @@ namespace DesignationManager
 	QSet<int> usedNumbers(QETProject *project,
 						  const QString &prefix,
 						  const Element *exclude = nullptr);
+
+	/// Build the element -> (old, new) info map to compact every prefix's
+	/// numbering to 1..N (sorted by current number). Manual/non-matching
+	/// labels are left untouched. Feed the result to a single
+	/// ChangeElementInformationCommand for one-step undo. Empty if nothing
+	/// needs changing.
+	QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>>
+	renumberMap(QETProject *project);
+
+	/// Find designations shared by more than one element, project-wide.
+	/// Returns label -> elements using it (only entries with size > 1).
+	QMap<QString, QList<Element *>> findDuplicates(QETProject *project);
 }
 
 #endif // DESIGNATIONMANAGER_H

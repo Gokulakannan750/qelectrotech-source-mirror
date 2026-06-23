@@ -130,6 +130,8 @@ class QETDiagramEditor : public QETMainWindow
 		void slot_updateWindowsMenu();
 		void slot_updateAutoNumDock();
 		void generateTerminalBlock();
+		void renumberDesignations();   ///< Custom: compact IEC 81346 designations
+		void checkDesignations();      ///< Custom: report duplicate designations
 		void setWindowedMode();
 		void setTabbedMode();
 		void readSettings();
@@ -211,6 +213,8 @@ class QETDiagramEditor : public QETMainWindow
 		*m_add_summary,			///<Add summary graphics item
 		*m_terminal_strip_dialog = nullptr, ///<Launch terminal strip dialog
 		*m_project_terminalBloc,	///< generate terminal block
+		*m_renumber_designations = nullptr,	///< Custom: compact IEC designations
+		*m_check_designations = nullptr,	///< Custom: duplicate designation report
 		*m_project_export_conductor_num,///<Export the wire num to csv
 		*m_project_export_wiring_list, ///< Action to export the wiring list
 		*m_terminal_numbering,         ///< Action to launch terminal numbering

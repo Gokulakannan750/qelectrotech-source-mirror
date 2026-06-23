@@ -28,6 +28,10 @@
 #include "diagramview.h"
 #include "elementspanelwidget.h"
 #include "custom/wirecatalogue/wirecatalogueui.h"
+#include "custom/designation/designationmanager.h"
+#include "undocommand/changeelementinformationcommand.h"
+#include "qetgraphicsitem/element.h"
+#include <QMessageBox>
 #include "factory/qetgraphicstablefactory.h"
 #include "print/projectprintwindow.h"
 #include "qetgraphicsitem/ViewItem/qetgraphicstableitem.h"
@@ -477,6 +481,12 @@ void QETDiagramEditor::setUpActions()
 	m_project_terminalBloc = new QAction(QET::Icons::TerminalStrip, tr("Lancer le plugin de création de borniers"), this);
 	connect(m_project_terminalBloc, &QAction::triggered, this, &QETDiagramEditor::generateTerminalBlock);
 
+		//Custom (Trovo Tech): IEC 81346 designation tools
+	m_renumber_designations = new QAction(tr("Renumber designations (IEC 81346)"), this);
+	connect(m_renumber_designations, &QAction::triggered, this, &QETDiagramEditor::renumberDesignations);
+	m_check_designations = new QAction(tr("Check designations (duplicates)"), this);
+	connect(m_check_designations, &QAction::triggered, this, &QETDiagramEditor::checkDesignations);
+
 	//Export conductor num to csv
 	m_project_export_conductor_num = new QAction(QET::Icons::DocumentSpreadsheet, tr("Exporter la liste des noms de conducteurs"), this);
 	connect(m_project_export_conductor_num, &QAction::triggered, [this]() {
@@ -873,6 +883,9 @@ void QETDiagramEditor::setUpMenu()
 	menu_project -> addAction(m_project_terminalBloc);
 	menu_project -> addAction(m_project_export_wiring_list);
 	menu_project -> addAction(m_terminal_numbering);
+	menu_project -> addSeparator();
+	menu_project -> addAction(m_renumber_designations);
+	menu_project -> addAction(m_check_designations);
 #ifdef QET_EXPORT_PROJECT_DB
 	menu_project -> addSeparator();
 	menu_project -> addAction(m_export_project_db);
@@ -2604,6 +2617,61 @@ void QETDiagramEditor::generateTerminalBlock()
 							 QObject::tr("Error launching qet_tb_generator plugin"),
 							 message);
 	}
+}
+
+/**
+	@brief QETDiagramEditor::renumberDesignations
+	Custom (Trovo Tech): compact every IEC 81346 designation letter to 1..N
+	across the current project, as a single undoable step.
+*/
+void QETDiagramEditor::renumberDesignations()
+{
+	QETProject *project = currentProject();
+	if (!project) {
+		QMessageBox::information(this, tr("Renumber designations"),
+								tr("No project is open."));
+		return;
+	}
+
+	const auto map = DesignationManager::renumberMap(project);
+	if (map.isEmpty()) {
+		QMessageBox::information(this, tr("Renumber designations"),
+								tr("Designations are already sequential — nothing to renumber."));
+		return;
+	}
+
+	project->undoStack()->push(new ChangeElementInformationCommand(map));
+	QMessageBox::information(this, tr("Renumber designations"),
+							tr("Renumbered %n designation(s).", "", map.size()));
+}
+
+/**
+	@brief QETDiagramEditor::checkDesignations
+	Custom (Trovo Tech): report designations shared by more than one element.
+*/
+void QETDiagramEditor::checkDesignations()
+{
+	QETProject *project = currentProject();
+	if (!project) {
+		QMessageBox::information(this, tr("Check designations"),
+								tr("No project is open."));
+		return;
+	}
+
+	const auto duplicates = DesignationManager::findDuplicates(project);
+	if (duplicates.isEmpty()) {
+		QMessageBox::information(this, tr("Check designations"),
+								tr("No duplicate designations found."));
+		return;
+	}
+
+	QStringList lines;
+	for (auto it = duplicates.constBegin(); it != duplicates.constEnd(); ++it)
+		lines << tr("%1 — used by %n element(s)", "", it.value().size()).arg(it.key());
+
+	QMessageBox::warning(this, tr("Check designations"),
+						 tr("Duplicate designations found:\n\n%1")
+							 .arg(lines.join(QStringLiteral("\n"))));
 }
 
 /**

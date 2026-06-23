@@ -27,6 +27,8 @@
 #include <QTimer>
 #include <QPointer>
 
+#include <algorithm>
+
 namespace DesignationManager {
 
 QSet<int> usedNumbers(QETProject *project,
@@ -94,6 +96,85 @@ static void doAssign(Element *element, bool force)
 	element->update();
 	if (element->scene())
 		element->scene()->update();
+}
+
+QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>>
+renumberMap(QETProject *project)
+{
+	QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>> result;
+	if (!project)
+		return result;
+
+	// Group auto-style elements (label == prefix + digits) by prefix.
+	struct Item { Element *e; int number; };
+	QMap<QString, QList<Item>> by_prefix;
+
+	const QList<Diagram *> diagrams = project->diagrams();
+	for (Diagram *d : diagrams) {
+		const QList<Element *> elements = d->elements();
+		for (Element *e : elements) {
+			if (e->linkType() == Element::Slave
+				|| (e->linkType() & Element::AllReport))
+				continue;
+			const QString prefix = e->getPrefix();
+			if (prefix.isEmpty())
+				continue;
+			const QString label = e->elementInformations()
+					.value(QStringLiteral("label")).toString();
+			const QRegularExpression rx(QStringLiteral("^%1(\\d+)$")
+				.arg(QRegularExpression::escape(prefix)));
+			const QRegularExpressionMatch m = rx.match(label);
+			if (m.hasMatch())
+				by_prefix[prefix].append({e, m.captured(1).toInt()});
+		}
+	}
+
+	for (auto it = by_prefix.begin(); it != by_prefix.end(); ++it) {
+		QList<Item> items = it.value();
+		std::sort(items.begin(), items.end(),
+				  [](const Item &a, const Item &b){ return a.number < b.number; });
+		int seq = 1;
+		for (const Item &item : items) {
+			if (item.number != seq) {
+				const DiagramContext old_info = item.e->elementInformations();
+				DiagramContext new_info = old_info;
+				new_info.addValue(QStringLiteral("label"),
+								  it.key() + QString::number(seq));
+				result.insert(QPointer<Element>(item.e),
+							  qMakePair(old_info, new_info));
+			}
+			++seq;
+		}
+	}
+	return result;
+}
+
+QMap<QString, QList<Element *>> findDuplicates(QETProject *project)
+{
+	QMap<QString, QList<Element *>> by_label;
+	if (!project)
+		return {};
+
+	const QList<Diagram *> diagrams = project->diagrams();
+	for (Diagram *d : diagrams) {
+		const QList<Element *> elements = d->elements();
+		for (Element *e : elements) {
+			if (e->linkType() == Element::Slave
+				|| (e->linkType() & Element::AllReport))
+				continue;
+			const QString label = e->elementInformations()
+					.value(QStringLiteral("label")).toString();
+			if (!label.isEmpty())
+				by_label[label].append(e);
+		}
+	}
+
+	QMap<QString, QList<Element *>> duplicates;
+	for (auto it = by_label.begin(); it != by_label.end(); ++it) {
+		if (it.value().size() > 1)
+			duplicates.insert(it.key(), it.value());
+	}
+	return duplicates;
 }
 
 void assignToElement(Element *element, bool force)
