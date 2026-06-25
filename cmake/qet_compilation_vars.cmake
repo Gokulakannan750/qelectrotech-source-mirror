@@ -559,6 +559,8 @@ set(QET_SRC_FILES
   ${QET_DIR}/sources/custom/wirecatalogue/iec60757.h
   ${QET_DIR}/sources/custom/wirecatalogue/corecoloreditor.cpp
   ${QET_DIR}/sources/custom/wirecatalogue/corecoloreditor.h
+  ${QET_DIR}/sources/custom/wirecatalogue/wirefilterproxymodel.cpp
+  ${QET_DIR}/sources/custom/wirecatalogue/wirefilterproxymodel.h
   # --- Custom feature: IEC 81346 designation engine (Trovo Tech) ---
   ${QET_DIR}/sources/custom/designation/designationmanager.cpp
   ${QET_DIR}/sources/custom/designation/designationmanager.h
