@@ -52,7 +52,7 @@ SwTerminalStripEditor::SwTerminalStripEditor(QETProject *project, QWidget *paren
 	QDialog(parent),
 	m_project(project)
 {
-	setWindowTitle(tr("Terminal strip editor (SolidWorks view)"));
+	setWindowTitle(tr("Terminal strip editor"));
 	resize(900, 520);
 	buildUi();
 	reload();

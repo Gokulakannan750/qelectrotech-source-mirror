@@ -476,7 +476,7 @@ void QETDiagramEditor::setUpActions()
 
 		//Custom (Trovo Tech): SolidWorks-style terminal strip editor
 	m_sw_terminal_strip = new QAction(QET::Icons::TerminalStrip,
-									  tr("Terminal strip editor (SolidWorks view)"), this);
+									  tr("Terminal strip editor"), this);
 	connect(m_sw_terminal_strip, &QAction::triggered, this, [this]()
 	{
 		if (auto project = this->currentProject()) {
