@@ -210,6 +210,7 @@ class QETDiagramEditor : public QETMainWindow
 		*m_add_nomenclature,		///< Add nomenclature graphics item;
 		*m_add_summary,			///<Add summary graphics item
 		*m_terminal_strip_dialog = nullptr, ///<Launch terminal strip dialog
+		*m_sw_terminal_strip = nullptr, ///< Custom: SolidWorks-style terminal strip editor
 		*m_project_terminalBloc,	///< generate terminal block
 		*m_project_export_conductor_num,///<Export the wire num to csv
 		*m_project_export_wiring_list, ///< Action to export the wiring list

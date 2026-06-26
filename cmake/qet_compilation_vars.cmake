@@ -561,6 +561,9 @@ set(QET_SRC_FILES
   ${QET_DIR}/sources/custom/wirecatalogue/corecoloreditor.h
   ${QET_DIR}/sources/custom/wirecatalogue/wirefilterproxymodel.cpp
   ${QET_DIR}/sources/custom/wirecatalogue/wirefilterproxymodel.h
+  # --- Custom feature: SolidWorks-style terminal strip editor (Trovo Tech) ---
+  ${QET_DIR}/sources/custom/terminalstrip/swterminalstripeditor.cpp
+  ${QET_DIR}/sources/custom/terminalstrip/swterminalstripeditor.h
 
   ${QET_DIR}/sources/TerminalStrip/physicalterminal.cpp
   ${QET_DIR}/sources/TerminalStrip/physicalterminal.h

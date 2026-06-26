@@ -28,6 +28,7 @@
 #include "diagramview.h"
 #include "elementspanelwidget.h"
 #include "custom/wirecatalogue/wirecatalogueui.h"
+#include "custom/terminalstrip/swterminalstripeditor.h"
 #include "factory/qetgraphicstablefactory.h"
 #include "print/projectprintwindow.h"
 #include "qetgraphicsitem/ViewItem/qetgraphicstableitem.h"
@@ -473,6 +474,18 @@ void QETDiagramEditor::setUpActions()
 		}
 	});
 
+		//Custom (Trovo Tech): SolidWorks-style terminal strip editor
+	m_sw_terminal_strip = new QAction(QET::Icons::TerminalStrip,
+									  tr("Terminal strip editor (SolidWorks view)"), this);
+	connect(m_sw_terminal_strip, &QAction::triggered, this, [this]()
+	{
+		if (auto project = this->currentProject()) {
+			auto *ed = new SwTerminalStripEditor(project, this);
+			ed->setAttribute(Qt::WA_DeleteOnClose);
+			ed->show();
+		}
+	});
+
 		//Launch the plugin of terminal generator
 	m_project_terminalBloc = new QAction(QET::Icons::TerminalStrip, tr("Lancer le plugin de création de borniers"), this);
 	connect(m_project_terminalBloc, &QAction::triggered, this, &QETDiagramEditor::generateTerminalBlock);
@@ -870,6 +883,7 @@ void QETDiagramEditor::setUpMenu()
 	menu_project -> addAction(m_csv_export);
 	menu_project -> addAction(m_project_export_conductor_num);
 	menu_project -> addAction(m_terminal_strip_dialog);
+	menu_project -> addAction(m_sw_terminal_strip);
 	menu_project -> addAction(m_project_terminalBloc);
 	menu_project -> addAction(m_project_export_wiring_list);
 	menu_project -> addAction(m_terminal_numbering);
@@ -1614,6 +1628,7 @@ void QETDiagramEditor::slot_updateActions()
 	m_csv_export                  -> setEnabled(editable_project);
 	m_project_export_conductor_num-> setEnabled(opened_project);
 	m_terminal_strip_dialog       -> setEnabled(editable_project);
+	if (m_sw_terminal_strip) m_sw_terminal_strip -> setEnabled(editable_project);
 	m_project_export_wiring_list  -> setEnabled(opened_project);
 	m_terminal_numbering          -> setEnabled(editable_project);
 #ifdef QET_EXPORT_PROJECT_DB
