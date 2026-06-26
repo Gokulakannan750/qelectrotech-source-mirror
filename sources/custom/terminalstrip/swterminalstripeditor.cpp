@@ -122,36 +122,41 @@ QString SwTerminalStripEditor::stripNameOf(Element *terminal) const
 	return label.isEmpty() ? tr("(unassigned)") : label;
 }
 
-SwTerminalStripEditor::Side
-SwTerminalStripEditor::sideInfo(Element *terminal, int index) const
+QVector<SwTerminalStripEditor::Side>
+SwTerminalStripEditor::sidesInfo(Element *terminal, int index) const
 {
-	Side s;
+	QVector<Side> sides;
 	if (!terminal)
-		return s;
+		return sides;
 	const QList<Terminal *> terms = terminal->terminals();
 	if (index < 0 || index >= terms.size())
-		return s;
+		return sides;
 
 	Terminal *t = terms.at(index);
 	if (!t)
-		return s;
+		return sides;
+
+	// A terminal end may carry several wires (junction / multi-drop) — one
+	// Side per attached conductor.
 	const QList<Conductor *> conds = t->conductors();
-	if (conds.isEmpty())
-		return s;
-
-	Conductor *c = conds.first();
-	Terminal *other = (c->terminal1 == t) ? c->terminal2 : c->terminal1;
-	Element *dest = other ? other->parentElement() : nullptr;
-	s.destination = labelOf(dest);
-
-	const ConductorProperties p = c->properties();
-	s.cable  = p.m_cable;
-	s.colour = p.m_wire_color.isEmpty() ? p.text : p.m_wire_color;
-	return s;
+	for (Conductor *c : conds) {
+		if (!c)
+			continue;
+		Side s;
+		Terminal *other = (c->terminal1 == t) ? c->terminal2 : c->terminal1;
+		Element *dest = other ? other->parentElement() : nullptr;
+		s.destination = labelOf(dest);
+		const ConductorProperties p = c->properties();
+		s.cable  = p.m_cable;
+		s.colour = p.m_wire_color.isEmpty() ? p.text : p.m_wire_color;
+		sides << s;
+	}
+	return sides;
 }
 
 void SwTerminalStripEditor::reload()
 {
+	m_table->clearSpans();
 	m_table->setRowCount(0);
 	m_row_terminal.clear();
 	if (!m_project)
@@ -167,41 +172,49 @@ void SwTerminalStripEditor::reload()
 				  return labelOf(a) < labelOf(b);
 			  });
 
+	auto setCell = [&](int r, int col, const QString &text, bool editable,
+					   const QString &colourSwatch = QString()) {
+		auto *item = new QTableWidgetItem(text);
+		if (!editable)
+			item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+		if (!colourSwatch.isEmpty() && Iec60757::colorForName(colourSwatch).isValid())
+			item->setIcon(QIcon(Iec60757::swatch(colourSwatch, 14)));
+		if (col == Mark)
+			item->setTextAlignment(Qt::AlignCenter);
+		m_table->setItem(r, col, item);
+	};
+
 	for (const QPointer<Element> &e : terms) {
 		if (!e)
 			continue;
 		if (!filter.isEmpty() && stripNameOf(e) != filter)
 			continue;
 
-		const Side left  = sideInfo(e, 0);
-		const Side right = sideInfo(e, 1);
+		// A terminal end may carry several wires -> one sub-row per wire, with
+		// the Mark cell spanning all sub-rows of this terminal.
+		const QVector<Side> left  = sidesInfo(e, 0);
+		const QVector<Side> right = sidesInfo(e, 1);
+		const int nsub = qMax(1, qMax(left.size(), right.size()));
 
-		const int r = m_table->rowCount();
-		m_table->insertRow(r);
-		m_row_terminal.append(e);
+		const int first = m_table->rowCount();
+		for (int i = 0; i < nsub; ++i) {
+			const int r = first + i;
+			m_table->insertRow(r);
+			m_row_terminal.append(e); // every sub-row maps to this terminal
 
-		auto setCell = [&](int col, const QString &text, bool editable,
-						   const QString &colourSwatch = QString()) {
-			auto *item = new QTableWidgetItem(text);
-			if (!editable)
-				item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-			if (!colourSwatch.isEmpty()) {
-				const QColor c = Iec60757::colorForName(colourSwatch);
-				if (c.isValid())
-					item->setIcon(QIcon(Iec60757::swatch(colourSwatch, 14)));
-			}
-			if (col == Mark)
-				item->setTextAlignment(Qt::AlignCenter);
-			m_table->setItem(r, col, item);
-		};
-
-		setCell(LeftDest,    left.destination,  false);
-		setCell(LeftCable,   left.cable,        false);
-		setCell(LeftColour,  left.colour,       false, left.colour);
-		setCell(Mark,        labelOf(e),        true);   // editable
-		setCell(RightColour, right.colour,      false, right.colour);
-		setCell(RightCable,  right.cable,       false);
-		setCell(RightDest,   right.destination, false);
+			const Side l = left.value(i);
+			const Side rt = right.value(i);
+			setCell(r, LeftDest,    l.destination,  false);
+			setCell(r, LeftCable,   l.cable,        false);
+			setCell(r, LeftColour,  l.colour,       false, l.colour);
+			setCell(r, RightColour, rt.colour,      false, rt.colour);
+			setCell(r, RightCable,  rt.cable,       false);
+			setCell(r, RightDest,   rt.destination, false);
+			if (i == 0)
+				setCell(r, Mark, labelOf(e), true); // editable, on first sub-row
+		}
+		if (nsub > 1)
+			m_table->setSpan(first, Mark, nsub, 1); // Mark spans the sub-rows
 	}
 	m_table->resizeColumnsToContents();
 	m_table->horizontalHeader()->setStretchLastSection(true);

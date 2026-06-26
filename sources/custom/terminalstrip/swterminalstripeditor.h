@@ -54,7 +54,9 @@ class SwTerminalStripEditor : public QDialog
 	private:
 		void buildUi();
 		struct Side { QString destination, cable, colour; };
-		Side sideInfo(Element *terminal, int index) const;
+		/// All conductors landing on connection point @p index of @p terminal
+		/// (one Side per wire — a terminal end may carry several wires).
+		QVector<Side> sidesInfo(Element *terminal, int index) const;
 		QString stripNameOf(Element *terminal) const;
 
 	private:
