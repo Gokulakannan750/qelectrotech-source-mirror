@@ -25,6 +25,7 @@
 #include "../../conductorproperties.h"
 #include "../../diagramcontext.h"
 #include "../../undocommand/changeelementinformationcommand.h"
+#include "../../qet.h"
 #include "../wirecatalogue/iec60757.h"
 
 #include <QVBoxLayout>
@@ -40,33 +41,71 @@
 #include <algorithm>
 
 namespace {
-	// Column order — Bridge is the leftmost narrow column that shows the jumper bar.
+	/*
+	 * Column layout (symmetric about the Mark column):
+	 *
+	 *  BridgeL | Dest(1) | Cable(1) | Colour(1) | Mark | Colour(2) | Cable(2) | Dest(2) | BridgeR
+	 *
+	 * End 1 = the terminal connection point whose orientation is North or East
+	 *         (top/left screw in standard mounting = supply/input side).
+	 * End 2 = the opposite point (South or West = load/output side).
+	 */
 	enum Col {
-		Bridge = 0,
-		LeftDest, LeftCable, LeftColour,
+		BridgeL = 0,
+		Dest1, Cable1, Colour1,
 		Mark,
-		RightColour, RightCable, RightDest,
+		Colour2, Cable2, Dest2,
+		BridgeR,
 		ColCount
 	};
 
-	// Palette for distinct bridge-group colours (soft but vivid).
+	// Palette for bridge-group colour bars.
 	const QColor kBridgePalette[] = {
-		{255, 193,   7},   // amber
-		{ 33, 150, 243},   // sky blue
-		{ 76, 175,  80},   // green
-		{233,  30,  99},   // rose
-		{156,  39, 176},   // purple
-		{255, 152,   0},   // orange
-		{  0, 188, 212},   // cyan
-		{233, 255,  50},   // lime
+		{255, 193,   7},  // amber
+		{ 33, 150, 243},  // sky blue
+		{ 76, 175,  80},  // green
+		{233,  30,  99},  // rose
+		{156,  39, 176},  // purple
+		{255, 152,   0},  // orange
+		{  0, 188, 212},  // cyan
+		{139, 195,  74},  // lime green
 	};
 	const int kPaletteSize = static_cast<int>(sizeof(kBridgePalette)
 	                                          / sizeof(kBridgePalette[0]));
+
+	// Orientation sort key: North=0, East=1, South=2, West=3.
+	// End 1 gets the lower key (North/East = top/right in standard mounting).
+	int orientationKey(Qet::Orientation o)
+	{
+		switch (o) {
+			case Qet::North: return 0;
+			case Qet::East:  return 1;
+			case Qet::South: return 2;
+			case Qet::West:  return 3;
+		}
+		return 4;
+	}
 
 	QString labelOf(Element *e)
 	{
 		return e ? e->elementInformations().value(QStringLiteral("label")).toString()
 				 : QString();
+	}
+
+	// Narrow bridge-column stylesheet helpers.
+	constexpr int kBridgeColWidth = 18;
+
+	QPushButton *makeActionBtn(const QString &text, const QString &bg,
+	                           const QString &border, QWidget *parent)
+	{
+		auto *btn = new QPushButton(text, parent);
+		btn->setStyleSheet(QStringLiteral(
+			"QPushButton { background:%1; border:1px solid %2;"
+			" border-radius:3px; padding:3px 8px; }"
+			"QPushButton:hover { background:%2; }"
+			"QPushButton:disabled { background:#eee; color:#aaa; border-color:#ccc; }")
+			.arg(bg, border));
+		return btn;
 	}
 }
 
@@ -75,44 +114,51 @@ SwTerminalStripEditor::SwTerminalStripEditor(QETProject *project, QWidget *paren
 	m_project(project)
 {
 	setWindowTitle(tr("Terminal strip editor"));
-	resize(960, 540);
+	resize(1020, 560);
 	buildUi();
 	reload();
 }
 
 void SwTerminalStripEditor::buildUi()
 {
-	auto *header = new QLabel(tr("Terminal strip — symmetric view"), this);
+	// ---- gradient header label --------------------------------------------
+	auto *header = new QLabel(
+		tr("End 1 (top / supply)   ←   Terminal strip — symmetric view   →   End 2 (bottom / load)"),
+		this);
 	header->setStyleSheet(QStringLiteral(
 		"QLabel { background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
 		" stop:0 #0066cc, stop:1 #00a651); color: white; font-weight: bold;"
 		" padding: 6px 10px; border-radius: 4px; }"));
 
-	// ---- filter row -------------------------------------------------------
+	// ---- filter + reorder row ---------------------------------------------
 	auto *filter_row = new QHBoxLayout;
 	filter_row->addWidget(new QLabel(tr("Terminal strip:"), this));
 	m_strip_filter = new QComboBox(this);
 	connect(m_strip_filter, QOverload<int>::of(&QComboBox::currentIndexChanged),
 			this, &SwTerminalStripEditor::reload);
 	filter_row->addWidget(m_strip_filter);
+
+	m_up_btn   = makeActionBtn(tr("▲ Move up"),   "#e3f2fd", "#90caf9", this);
+	m_down_btn = makeActionBtn(tr("▼ Move down"), "#e3f2fd", "#90caf9", this);
+	m_up_btn->setToolTip(tr("Move the selected terminal one position up within the strip."));
+	m_down_btn->setToolTip(tr("Move the selected terminal one position down within the strip."));
+	m_up_btn->setEnabled(false);
+	m_down_btn->setEnabled(false);
+	connect(m_up_btn,   &QPushButton::clicked, this, &SwTerminalStripEditor::moveUp);
+	connect(m_down_btn, &QPushButton::clicked, this, &SwTerminalStripEditor::moveDown);
+
 	filter_row->addStretch(1);
+	filter_row->addWidget(m_up_btn);
+	filter_row->addWidget(m_down_btn);
 
-	// ---- bridge action buttons --------------------------------------------
-	m_add_bridge_btn = new QPushButton(tr("Add bridge"), this);
+	// ---- bridge buttons ---------------------------------------------------
+	m_add_bridge_btn = makeActionBtn(tr("Add bridge"), "#e8f5e9", "#81c784", this);
 	m_add_bridge_btn->setToolTip(
-		tr("Select two or more adjacent terminal rows, then click to link them with a bridge/jumper."));
-	m_add_bridge_btn->setStyleSheet(
-		QStringLiteral("QPushButton { background:#e8f5e9; border:1px solid #81c784;"
-		               " border-radius:3px; padding:3px 8px; }"
-		               "QPushButton:hover { background:#c8e6c9; }"));
+		tr("Select two or more terminal rows, then click to link them with a bridge/jumper."));
 
-	m_remove_bridge_btn = new QPushButton(tr("Remove bridge"), this);
+	m_remove_bridge_btn = makeActionBtn(tr("Remove bridge"), "#fce4ec", "#e57373", this);
 	m_remove_bridge_btn->setToolTip(
-		tr("Select bridged terminal rows, then click to remove their bridge/jumper link."));
-	m_remove_bridge_btn->setStyleSheet(
-		QStringLiteral("QPushButton { background:#fce4ec; border:1px solid #e57373;"
-		               " border-radius:3px; padding:3px 8px; }"
-		               "QPushButton:hover { background:#f8bbd0; }"));
+		tr("Select bridged terminal rows, then click to remove the bridge/jumper link."));
 
 	connect(m_add_bridge_btn,    &QPushButton::clicked,
 			this, &SwTerminalStripEditor::addBridge);
@@ -127,19 +173,27 @@ void SwTerminalStripEditor::buildUi()
 	m_table->setColumnCount(ColCount);
 	m_table->setHorizontalHeaderLabels({
 		tr("Br"),
-		tr("Destination"), tr("Cable"), tr("Colour"),
+		tr("Dest. (1)"), tr("Cable (1)"), tr("Colour (1)"),
 		tr("Mark"),
-		tr("Colour"), tr("Cable"), tr("Destination") });
+		tr("Colour (2)"), tr("Cable (2)"), tr("Dest. (2)"),
+		tr("Br") });
 	m_table->verticalHeader()->setVisible(false);
-	m_table->horizontalHeader()->setStretchLastSection(true);
-	// Allow multi-row selection for bridge operations.
+	m_table->horizontalHeader()->setStretchLastSection(false);
+	// Middle columns stretch; outer ones resize to content.
+	m_table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+	m_table->horizontalHeader()->setSectionResizeMode(Dest1,  QHeaderView::Stretch);
+	m_table->horizontalHeader()->setSectionResizeMode(Dest2,  QHeaderView::Stretch);
+	m_table->horizontalHeader()->setSectionResizeMode(BridgeL, QHeaderView::Fixed);
+	m_table->horizontalHeader()->setSectionResizeMode(BridgeR, QHeaderView::Fixed);
+	m_table->setColumnWidth(BridgeL, kBridgeColWidth);
+	m_table->setColumnWidth(BridgeR, kBridgeColWidth);
+
 	m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-	// Keep the Bridge column narrow.
-	m_table->horizontalHeader()->setSectionResizeMode(Bridge, QHeaderView::Fixed);
-	m_table->setColumnWidth(Bridge, 18);
+	connect(m_table, &QTableWidget::itemSelectionChanged,
+			this, &SwTerminalStripEditor::updateMoveButtons);
 
-	// ---- buttons ----------------------------------------------------------
+	// ---- bottom buttons ---------------------------------------------------
 	auto *buttons = new QDialogButtonBox(
 		QDialogButtonBox::Save | QDialogButtonBox::Close, this);
 	buttons->button(QDialogButtonBox::Save)->setText(tr("Apply marks"));
@@ -154,7 +208,7 @@ void SwTerminalStripEditor::buildUi()
 	layout->addWidget(m_table, 1);
 	layout->addWidget(buttons);
 
-	// Populate the strip filter once.
+	// Populate the strip-name filter once on open.
 	if (m_project) {
 		QStringList strips;
 		const auto terms = ElementProvider(m_project).find(ElementData::Terminal);
@@ -181,7 +235,7 @@ QString SwTerminalStripEditor::stripNameOf(Element *terminal) const
 	const QString label = labelOf(terminal);
 	const int colon = label.indexOf(QLatin1Char(':'));
 	if (colon > 0)
-		return label.left(colon);          // "X12:1" -> "X12"
+		return label.left(colon);    // "X12:3" -> "X12"
 	return label.isEmpty() ? tr("(unassigned)") : label;
 }
 
@@ -193,9 +247,18 @@ QUuid SwTerminalStripEditor::bridgeGroupOf(Element *e) const
 	return s.isEmpty() ? QUuid() : QUuid(s);
 }
 
+int SwTerminalStripEditor::stripPosOf(Element *e) const
+{
+	if (!e) return -1;
+	const QVariant v = e->elementInformations().value(QStringLiteral("strip_pos"));
+	if (!v.isValid() || v.isNull()) return -1;
+	bool ok = false;
+	const int pos = v.toInt(&ok);
+	return ok ? pos : -1;
+}
+
 QVector<QPointer<Element>> SwTerminalStripEditor::selectedTerminals() const
 {
-	// Collect unique terminal elements covering every selected row.
 	QVector<QPointer<Element>> result;
 	for (const QTableWidgetSelectionRange &range : m_table->selectedRanges()) {
 		for (int r = range.topRow(); r <= range.bottomRow(); ++r) {
@@ -209,23 +272,38 @@ QVector<QPointer<Element>> SwTerminalStripEditor::selectedTerminals() const
 	return result;
 }
 
+/**
+ * Returns wires on terminal end @p endIndex of @p terminal.
+ *
+ * The two physical connection points of a terminal element are sorted by their
+ * orientation value (North=0, East=1, South=2, West=3) so that:
+ *   endIndex 0  →  end 1  (North/East = top or right screw, supply/input side)
+ *   endIndex 1  →  end 2  (South/West = bottom or left screw, load/output side)
+ *
+ * This is independent of the order the <terminal> tags appear in the .elmt XML.
+ */
 QVector<SwTerminalStripEditor::Side>
-SwTerminalStripEditor::sidesInfo(Element *terminal, int index) const
+SwTerminalStripEditor::sidesInfo(Element *terminal, int endIndex) const
 {
 	QVector<Side> sides;
 	if (!terminal) return sides;
-	const QList<Terminal *> terms = terminal->terminals();
-	if (index < 0 || index >= terms.size()) return sides;
-	Terminal *t = terms.at(index);
+
+	// Sort the element's connection points by orientation so end 1 is always
+	// the North/East point and end 2 is always the South/West point.
+	QList<Terminal *> pts = terminal->terminals();
+	std::stable_sort(pts.begin(), pts.end(), [](Terminal *a, Terminal *b) {
+		return orientationKey(a->orientation()) < orientationKey(b->orientation());
+	});
+
+	if (endIndex < 0 || endIndex >= pts.size()) return sides;
+	Terminal *t = pts.at(endIndex);
 	if (!t) return sides;
 
-	const QList<Conductor *> conds = t->conductors();
-	for (Conductor *c : conds) {
+	for (Conductor *c : t->conductors()) {
 		if (!c) continue;
 		Side s;
 		Terminal *other = (c->terminal1 == t) ? c->terminal2 : c->terminal1;
-		Element *dest = other ? other->parentElement() : nullptr;
-		s.destination = labelOf(dest);
+		s.destination = labelOf(other ? other->parentElement() : nullptr);
 		const ConductorProperties p = c->properties();
 		s.cable  = p.m_cable;
 		s.colour = p.m_wire_color.isEmpty() ? p.text : p.m_wire_color;
@@ -244,6 +322,7 @@ void SwTerminalStripEditor::reload()
 	m_table->setRowCount(0);
 	m_row_terminal.clear();
 	m_terminal_rows.clear();
+	m_display_order.clear();
 
 	if (!m_project) return;
 
@@ -252,38 +331,51 @@ void SwTerminalStripEditor::reload()
 	                       : QString();
 
 	auto terms = ElementProvider(m_project).find(ElementData::Terminal);
+
+	// Sort: manual strip_pos first, then label alphabetically.
 	std::sort(terms.begin(), terms.end(),
-			  [](const QPointer<Element> &a, const QPointer<Element> &b) {
-				  return labelOf(a) < labelOf(b);
-			  });
+		[this](const QPointer<Element> &a, const QPointer<Element> &b) {
+			const int pa = stripPosOf(a.data());
+			const int pb = stripPosOf(b.data());
+			if (pa >= 0 && pb >= 0) return pa < pb;
+			if (pa >= 0 && pb <  0) return true;   // positioned before unpositioned
+			if (pa <  0 && pb >= 0) return false;
+			return labelOf(a) < labelOf(b);
+		});
+
+	auto makeEmptyBridgeCell = [&](int r, int col) {
+		auto *item = new QTableWidgetItem();
+		item->setFlags(item->flags() & ~Qt::ItemIsEditable);
+		m_table->setItem(r, col, item);
+	};
 
 	auto setCell = [&](int r, int col, const QString &text, bool editable,
-					   const QString &colourSwatch = QString()) {
+	                   const QString &swatchName = QString()) {
 		auto *item = new QTableWidgetItem(text);
 		if (!editable)
 			item->setFlags(item->flags() & ~Qt::ItemIsEditable);
-		if (!colourSwatch.isEmpty() && Iec60757::colorForName(colourSwatch).isValid())
-			item->setIcon(QIcon(Iec60757::swatch(colourSwatch, 14)));
+		if (!swatchName.isEmpty() && Iec60757::colorForName(swatchName).isValid())
+			item->setIcon(QIcon(Iec60757::swatch(swatchName, 14)));
 		if (col == Mark)
 			item->setTextAlignment(Qt::AlignCenter);
 		m_table->setItem(r, col, item);
 	};
 
-	// Bridge groups: UUID -> list of visible terminal elements in this reload.
 	QMap<QUuid, QVector<QPointer<Element>>> bridge_groups;
 
 	for (const QPointer<Element> &e : terms) {
 		if (!e) continue;
 		if (!filter.isEmpty() && stripNameOf(e) != filter) continue;
 
-		const QVector<Side> left  = sidesInfo(e, 0);
-		const QVector<Side> right = sidesInfo(e, 1);
-		const int nsub = qMax(1, qMax(left.size(), right.size()));
+		m_display_order.append(e);
+
+		const QVector<Side> end1 = sidesInfo(e, 0);
+		const QVector<Side> end2 = sidesInfo(e, 1);
+		const int nsub = qMax(1, qMax(end1.size(), end2.size()));
 
 		const int first = m_table->rowCount();
 		m_terminal_rows[e] = qMakePair(first, nsub);
 
-		// Collect bridge group membership.
 		const QUuid bg = bridgeGroupOf(e.data());
 		if (!bg.isNull())
 			bridge_groups[bg].append(e);
@@ -293,19 +385,18 @@ void SwTerminalStripEditor::reload()
 			m_table->insertRow(r);
 			m_row_terminal.append(e);
 
-			// Bridge column — placeholder item; coloured later by paintBridges().
-			auto *br_item = new QTableWidgetItem();
-			br_item->setFlags(br_item->flags() & ~Qt::ItemIsEditable);
-			m_table->setItem(r, Bridge, br_item);
+			makeEmptyBridgeCell(r, BridgeL);
+			makeEmptyBridgeCell(r, BridgeR);
 
-			const Side l  = left.value(i);
-			const Side rt = right.value(i);
-			setCell(r, LeftDest,    l.destination,  false);
-			setCell(r, LeftCable,   l.cable,        false);
-			setCell(r, LeftColour,  l.colour,       false, l.colour);
-			setCell(r, RightColour, rt.colour,      false, rt.colour);
-			setCell(r, RightCable,  rt.cable,       false);
-			setCell(r, RightDest,   rt.destination, false);
+			const Side s1 = end1.value(i);
+			const Side s2 = end2.value(i);
+			setCell(r, Dest1,   s1.destination, false);
+			setCell(r, Cable1,  s1.cable,        false);
+			setCell(r, Colour1, s1.colour,       false, s1.colour);
+			setCell(r, Colour2, s2.colour,       false, s2.colour);
+			setCell(r, Cable2,  s2.cable,        false);
+			setCell(r, Dest2,   s2.destination,  false);
+
 			if (i == 0)
 				setCell(r, Mark, labelOf(e), true);
 		}
@@ -313,16 +404,16 @@ void SwTerminalStripEditor::reload()
 			m_table->setSpan(first, Mark, nsub, 1);
 	}
 
-	// Paint bridge indicators after all rows exist.
 	paintBridges(bridge_groups);
 
-	m_table->resizeColumnsToContents();
-	m_table->setColumnWidth(Bridge, 18);
-	m_table->horizontalHeader()->setStretchLastSection(true);
+	m_table->setColumnWidth(BridgeL, kBridgeColWidth);
+	m_table->setColumnWidth(BridgeR, kBridgeColWidth);
+
+	updateMoveButtons();
 }
 
 // ---------------------------------------------------------------------------
-// paintBridges — colour the Bridge column and span bridged rows
+// paintBridges — colour BridgeL and BridgeR columns and merge bridged spans
 // ---------------------------------------------------------------------------
 
 void SwTerminalStripEditor::paintBridges(
@@ -336,29 +427,27 @@ void SwTerminalStripEditor::paintBridges(
 		for (const QPointer<Element> &e : it.value()) {
 			if (!m_terminal_rows.contains(e)) continue;
 			const auto &rows = m_terminal_rows.value(e);
-			const int fr   = rows.first;
-			const int nsub = rows.second;
-			span_start = qMin(span_start, fr);
-			span_end   = qMax(span_end, fr + nsub - 1);
+			span_start = qMin(span_start, rows.first);
+			span_end   = qMax(span_end,   rows.first + rows.second - 1);
 		}
 
 		if (span_start == INT_MAX) continue;
 
-		// Colour each Bridge cell in the span — they form a solid coloured bar.
 		for (int r = span_start; r <= span_end; ++r) {
-			if (auto *item = m_table->item(r, Bridge))
-				item->setBackground(color);
+			if (auto *il = m_table->item(r, BridgeL)) il->setBackground(color);
+			if (auto *ir = m_table->item(r, BridgeR)) ir->setBackground(color);
 		}
 
-		// Merge the entire span into one tall cell for a clean bar appearance.
 		const int span_len = span_end - span_start + 1;
-		if (span_len > 1)
-			m_table->setSpan(span_start, Bridge, span_len, 1);
+		if (span_len > 1) {
+			m_table->setSpan(span_start, BridgeL, span_len, 1);
+			m_table->setSpan(span_start, BridgeR, span_len, 1);
+		}
 	}
 }
 
 // ---------------------------------------------------------------------------
-// applyMarks — write Mark column back to terminal elements (undoable)
+// applyMarks — write the Mark column back to terminal elements (undoable)
 // ---------------------------------------------------------------------------
 
 void SwTerminalStripEditor::applyMarks()
@@ -385,7 +474,7 @@ void SwTerminalStripEditor::applyMarks()
 }
 
 // ---------------------------------------------------------------------------
-// addBridge — link selected terminals into one bridge/jumper group (undoable)
+// addBridge / removeBridge
 // ---------------------------------------------------------------------------
 
 void SwTerminalStripEditor::addBridge()
@@ -399,8 +488,7 @@ void SwTerminalStripEditor::addBridge()
 		return;
 	}
 
-	// If any selected terminal already belongs to a bridge group, extend that
-	// group rather than creating a new UUID.
+	// Reuse an existing group UUID if one is already in the selection.
 	QUuid group_uuid;
 	for (const QPointer<Element> &e : sel) {
 		const QUuid existing = bridgeGroupOf(e.data());
@@ -424,16 +512,11 @@ void SwTerminalStripEditor::addBridge()
 	}
 }
 
-// ---------------------------------------------------------------------------
-// removeBridge — detach selected terminals from their bridge groups (undoable)
-// ---------------------------------------------------------------------------
-
 void SwTerminalStripEditor::removeBridge()
 {
 	if (!m_project) return;
 
 	const QVector<QPointer<Element>> sel = selectedTerminals();
-
 	QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>> changes;
 	for (const QPointer<Element> &e : sel) {
 		if (!e || bridgeGroupOf(e.data()).isNull()) continue;
@@ -450,4 +533,118 @@ void SwTerminalStripEditor::removeBridge()
 	}
 	m_project->undoStack()->push(new ChangeElementInformationCommand(changes));
 	reload();
+}
+
+// ---------------------------------------------------------------------------
+// moveUp / moveDown — reorder terminals within the strip (persisted, undoable)
+// ---------------------------------------------------------------------------
+
+void SwTerminalStripEditor::moveUp()
+{
+	const QVector<QPointer<Element>> sel = selectedTerminals();
+	if (sel.size() != 1) return;
+
+	const QPointer<Element> e = sel.first();
+	const int idx = m_display_order.indexOf(e);
+	if (idx <= 0) return;                          // already at top
+	const QPointer<Element> above = m_display_order.at(idx - 1);
+	if (!above) return;
+
+	// Gather current positions of all displayed terminals (initialize if unset).
+	QVector<int> positions;
+	positions.reserve(m_display_order.size());
+	for (const QPointer<Element> &el : m_display_order)
+		positions.append(stripPosOf(el.data()));
+
+	// If any position is unset, initialise all to multiples of 10.
+	const bool any_unset = std::any_of(positions.cbegin(), positions.cend(),
+	                                   [](int v){ return v < 0; });
+	if (any_unset)
+		for (int i = 0; i < positions.size(); ++i)
+			positions[i] = i * 10;
+
+	std::swap(positions[idx], positions[idx - 1]);
+
+	// Build one batched undo command covering all changed positions.
+	QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>> changes;
+	for (int i = 0; i < m_display_order.size(); ++i) {
+		const QPointer<Element> &el = m_display_order.at(i);
+		if (!el) continue;
+		const int new_pos = positions[i];
+		if (new_pos == stripPosOf(el.data())) continue;
+		const DiagramContext old_info = el->elementInformations();
+		DiagramContext new_info = old_info;
+		new_info.addValue(QStringLiteral("strip_pos"), new_pos);
+		changes.insert(el, qMakePair(old_info, new_info));
+	}
+
+	if (!changes.isEmpty()) {
+		m_project->undoStack()->push(new ChangeElementInformationCommand(changes));
+		reload();
+		// Re-select the moved terminal so the user can continue moving.
+		if (m_terminal_rows.contains(e)) {
+			const int new_first = m_terminal_rows.value(e).first;
+			m_table->selectRow(new_first);
+		}
+	}
+}
+
+void SwTerminalStripEditor::moveDown()
+{
+	const QVector<QPointer<Element>> sel = selectedTerminals();
+	if (sel.size() != 1) return;
+
+	const QPointer<Element> e = sel.first();
+	const int idx = m_display_order.indexOf(e);
+	if (idx < 0 || idx >= m_display_order.size() - 1) return;  // already at bottom
+	const QPointer<Element> below = m_display_order.at(idx + 1);
+	if (!below) return;
+
+	QVector<int> positions;
+	positions.reserve(m_display_order.size());
+	for (const QPointer<Element> &el : m_display_order)
+		positions.append(stripPosOf(el.data()));
+
+	const bool any_unset = std::any_of(positions.cbegin(), positions.cend(),
+	                                   [](int v){ return v < 0; });
+	if (any_unset)
+		for (int i = 0; i < positions.size(); ++i)
+			positions[i] = i * 10;
+
+	std::swap(positions[idx], positions[idx + 1]);
+
+	QMap<QPointer<Element>, QPair<DiagramContext, DiagramContext>> changes;
+	for (int i = 0; i < m_display_order.size(); ++i) {
+		const QPointer<Element> &el = m_display_order.at(i);
+		if (!el) continue;
+		const int new_pos = positions[i];
+		if (new_pos == stripPosOf(el.data())) continue;
+		const DiagramContext old_info = el->elementInformations();
+		DiagramContext new_info = old_info;
+		new_info.addValue(QStringLiteral("strip_pos"), new_pos);
+		changes.insert(el, qMakePair(old_info, new_info));
+	}
+
+	if (!changes.isEmpty()) {
+		m_project->undoStack()->push(new ChangeElementInformationCommand(changes));
+		reload();
+		if (m_terminal_rows.contains(e)) {
+			const int new_first = m_terminal_rows.value(e).first;
+			m_table->selectRow(new_first);
+		}
+	}
+}
+
+void SwTerminalStripEditor::updateMoveButtons()
+{
+	const QVector<QPointer<Element>> sel = selectedTerminals();
+	const bool single = (sel.size() == 1);
+	if (!single) {
+		m_up_btn->setEnabled(false);
+		m_down_btn->setEnabled(false);
+		return;
+	}
+	const int idx = m_display_order.indexOf(sel.first());
+	m_up_btn->setEnabled(idx > 0);
+	m_down_btn->setEnabled(idx >= 0 && idx < m_display_order.size() - 1);
 }

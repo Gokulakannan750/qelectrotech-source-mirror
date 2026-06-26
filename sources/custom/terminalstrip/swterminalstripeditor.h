@@ -33,14 +33,23 @@ class QPushButton;
 /**
 	@brief SolidWorks-Electrical-style terminal strip editor.
 
-	Symmetric table: Bridge | left (dest/cable/colour) | Mark | right (colour/cable/dest)
-	The Bridge column shows coloured spans connecting terminals that share a
-	bridge/jumper group. Bridges are stored as a UUID string in each terminal
-	element's DiagramContext under the key "bridge_group".
+	Column layout:
+	  BridgeL | Dest(1) | Cable(1) | Colour(1) | Mark | Colour(2) | Cable(2) | Dest(2) | BridgeR
+
+	Terminal end 1 = the connection point whose orientation is North or East
+	(i.e. the top / supply screw in standard European mounting).
+	Terminal end 2 = the opposite point (South or West = bottom / load screw).
+	This is derived from Terminal::orientation() — NOT from element-array index —
+	so it stays correct regardless of XML order.
+
+	Bridges are stored as a UUID string in DiagramContext["bridge_group"] on
+	each terminal element.  Row order within a strip is stored as an integer in
+	DiagramContext["strip_pos"] and can be changed with the Up/Down buttons.
 
 	Phase 1: symmetric view + editable marks.
 	Phase 2: multiple wires per terminal end (sub-rows + Mark span).
-	Phase 3: bridges and jumpers (Bridge column, Add/Remove bridge actions).
+	Phase 3: bridges and jumpers (BridgeL/BridgeR columns, Add/Remove bridge).
+	Phase 4: correct terminal-end numbering, BridgeR column, Up/Down reorder.
 */
 class SwTerminalStripEditor : public QDialog
 {
@@ -54,19 +63,25 @@ class SwTerminalStripEditor : public QDialog
 		void applyMarks();
 		void addBridge();
 		void removeBridge();
+		void moveUp();
+		void moveDown();
+		void updateMoveButtons();
 
 	private:
 		void buildUi();
 		void paintBridges(const QMap<QUuid, QVector<QPointer<Element>>> &groups);
 
 		struct Side { QString destination, cable, colour; };
-		/// All conductors landing on connection point @p index of @p terminal.
-		QVector<Side> sidesInfo(Element *terminal, int index) const;
+
+		/// Wires on terminal-end @p endIndex (0=end 1, 1=end 2) of @p terminal,
+		/// where ends are sorted by orientation (North/East first = end 1).
+		QVector<Side> sidesInfo(Element *terminal, int endIndex) const;
 
 		QString stripNameOf(Element *terminal) const;
 		QUuid   bridgeGroupOf(Element *e) const;
+		int     stripPosOf(Element *e) const;
 
-		/// Returns the set of unique terminal elements for the current table selection.
+		/// Unique terminal elements for the current table selection.
 		QVector<QPointer<Element>> selectedTerminals() const;
 
 	private:
@@ -75,11 +90,15 @@ class SwTerminalStripEditor : public QDialog
 		QTableWidget             *m_table             = nullptr;
 		QPushButton              *m_add_bridge_btn    = nullptr;
 		QPushButton              *m_remove_bridge_btn = nullptr;
+		QPushButton              *m_up_btn            = nullptr;
+		QPushButton              *m_down_btn          = nullptr;
 
 		/// Every sub-row maps to its parent terminal element.
 		QVector<QPointer<Element>> m_row_terminal;
 		/// For each visible terminal: (first_row, nsub).
 		QMap<QPointer<Element>, QPair<int,int>> m_terminal_rows;
+		/// Visible terminals in current display order (used by moveUp/moveDown).
+		QVector<QPointer<Element>> m_display_order;
 };
 
 #endif // SWTERMINALSTRIPEDITOR_H
