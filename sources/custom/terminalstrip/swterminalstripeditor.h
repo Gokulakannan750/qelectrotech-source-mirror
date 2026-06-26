@@ -19,26 +19,28 @@
 #define SWTERMINALSTRIPEDITOR_H
 
 #include <QDialog>
+#include <QMap>
 #include <QPointer>
+#include <QUuid>
 #include <QVector>
 
 class QETProject;
 class Element;
 class QTableWidget;
 class QComboBox;
+class QPushButton;
 
 /**
-	@brief SolidWorks-Electrical-style terminal strip editor (phase 1).
+	@brief SolidWorks-Electrical-style terminal strip editor.
 
-	Scans the project for terminal elements and presents them in the symmetric
-	SWE layout — left (destination / cable / colour) | Mark | right (colour /
-	cable / destination) — grouped by terminal block. The left/right cable and
-	colour come from the conductors attached to each side (populated by the
-	wire-catalogue "Assign wires" feature). The Mark column is editable and
-	written back to the terminal elements as one undoable step.
+	Symmetric table: Bridge | left (dest/cable/colour) | Mark | right (colour/cable/dest)
+	The Bridge column shows coloured spans connecting terminals that share a
+	bridge/jumper group. Bridges are stored as a UUID string in each terminal
+	element's DiagramContext under the key "bridge_group".
 
-	Later phases: bridges, multi-level terminals, insert/delete/reorder, and
-	generating the terminal strip drawing.
+	Phase 1: symmetric view + editable marks.
+	Phase 2: multiple wires per terminal end (sub-rows + Mark span).
+	Phase 3: bridges and jumpers (Bridge column, Add/Remove bridge actions).
 */
 class SwTerminalStripEditor : public QDialog
 {
@@ -50,20 +52,34 @@ class SwTerminalStripEditor : public QDialog
 	private slots:
 		void reload();
 		void applyMarks();
+		void addBridge();
+		void removeBridge();
 
 	private:
 		void buildUi();
+		void paintBridges(const QMap<QUuid, QVector<QPointer<Element>>> &groups);
+
 		struct Side { QString destination, cable, colour; };
-		/// All conductors landing on connection point @p index of @p terminal
-		/// (one Side per wire — a terminal end may carry several wires).
+		/// All conductors landing on connection point @p index of @p terminal.
 		QVector<Side> sidesInfo(Element *terminal, int index) const;
+
 		QString stripNameOf(Element *terminal) const;
+		QUuid   bridgeGroupOf(Element *e) const;
+
+		/// Returns the set of unique terminal elements for the current table selection.
+		QVector<QPointer<Element>> selectedTerminals() const;
 
 	private:
 		QPointer<QETProject>      m_project;
-		QComboBox                *m_strip_filter = nullptr;
-		QTableWidget             *m_table        = nullptr;
-		QVector<QPointer<Element>> m_row_terminal; // row -> terminal element
+		QComboBox                *m_strip_filter      = nullptr;
+		QTableWidget             *m_table             = nullptr;
+		QPushButton              *m_add_bridge_btn    = nullptr;
+		QPushButton              *m_remove_bridge_btn = nullptr;
+
+		/// Every sub-row maps to its parent terminal element.
+		QVector<QPointer<Element>> m_row_terminal;
+		/// For each visible terminal: (first_row, nsub).
+		QMap<QPointer<Element>, QPair<int,int>> m_terminal_rows;
 };
 
 #endif // SWTERMINALSTRIPEDITOR_H
