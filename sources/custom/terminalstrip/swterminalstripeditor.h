@@ -33,23 +33,21 @@ class QPushButton;
 /**
 	@brief SolidWorks-Electrical-style terminal strip editor.
 
-	Column layout:
-	  BridgeL | Dest(1) | Cable(1) | Colour(1) | Mark | Colour(2) | Cable(2) | Dest(2) | BridgeR
+	Full column layout (symmetric about Mark):
+	  BridgeL | Wire(1) | Folio(1) | Dest.(1) | Cable(1) | Colour(1)
+	          | Mark |
+	          Colour(2) | Cable(2) | Dest.(2) | Folio(2) | Wire(2) | BridgeR
 
-	Terminal end 1 = the connection point whose orientation is North or East
-	(i.e. the top / supply screw in standard European mounting).
-	Terminal end 2 = the opposite point (South or West = bottom / load screw).
-	This is derived from Terminal::orientation() — NOT from element-array index —
-	so it stays correct regardless of XML order.
+	Wire number  = conductor text (ConductorProperties::text) — same field that
+	               QET displays on the wire; this IS the potential/net label in
+	               QET's auto-numbering convention.
+	Folio        = finalfolio() of the far-end destination element's diagram.
+	Bridges      = UUID stored in DiagramContext["bridge_group"].
+	Row order    = integer stored in DiagramContext["strip_pos"], undoable.
 
-	Bridges are stored as a UUID string in DiagramContext["bridge_group"] on
-	each terminal element.  Row order within a strip is stored as an integer in
-	DiagramContext["strip_pos"] and can be changed with the Up/Down buttons.
-
-	Phase 1: symmetric view + editable marks.
-	Phase 2: multiple wires per terminal end (sub-rows + Mark span).
-	Phase 3: bridges and jumpers (BridgeL/BridgeR columns, Add/Remove bridge).
-	Phase 4: correct terminal-end numbering, BridgeR column, Up/Down reorder.
+	Output:
+	  "Export CSV"       → writes a flat CSV file of the strip data.
+	  "Generate drawing" → renders a PDF of the terminal strip table.
 */
 class SwTerminalStripEditor : public QDialog
 {
@@ -66,22 +64,29 @@ class SwTerminalStripEditor : public QDialog
 		void moveUp();
 		void moveDown();
 		void updateMoveButtons();
+		void exportCsv();
+		void generateDrawing();
 
 	private:
 		void buildUi();
 		void paintBridges(const QMap<QUuid, QVector<QPointer<Element>>> &groups);
 
-		struct Side { QString destination, cable, colour; };
+		struct Side {
+			QString wire_number;  ///< conductor text = wire number / potential label
+			QString folio;        ///< finalfolio of the far-end element's diagram
+			QString destination;  ///< label of the far-end element
+			QString cable;        ///< m_cable from ConductorProperties
+			QString colour;       ///< m_wire_color or fallback to text colour
+		};
 
-		/// Wires on terminal-end @p endIndex (0=end 1, 1=end 2) of @p terminal,
-		/// where ends are sorted by orientation (North/East first = end 1).
+		/// Wires on terminal end @p endIndex (0=end1/supply, 1=end2/load).
+		/// Ends are sorted by orientation: North/East = end 1, South/West = end 2.
 		QVector<Side> sidesInfo(Element *terminal, int endIndex) const;
 
 		QString stripNameOf(Element *terminal) const;
 		QUuid   bridgeGroupOf(Element *e) const;
 		int     stripPosOf(Element *e) const;
 
-		/// Unique terminal elements for the current table selection.
 		QVector<QPointer<Element>> selectedTerminals() const;
 
 	private:
@@ -92,13 +97,12 @@ class SwTerminalStripEditor : public QDialog
 		QPushButton              *m_remove_bridge_btn = nullptr;
 		QPushButton              *m_up_btn            = nullptr;
 		QPushButton              *m_down_btn          = nullptr;
+		QPushButton              *m_export_csv_btn    = nullptr;
+		QPushButton              *m_generate_draw_btn = nullptr;
 
-		/// Every sub-row maps to its parent terminal element.
-		QVector<QPointer<Element>> m_row_terminal;
-		/// For each visible terminal: (first_row, nsub).
-		QMap<QPointer<Element>, QPair<int,int>> m_terminal_rows;
-		/// Visible terminals in current display order (used by moveUp/moveDown).
-		QVector<QPointer<Element>> m_display_order;
+		QVector<QPointer<Element>> m_row_terminal;   ///< sub-row → terminal element
+		QMap<QPointer<Element>, QPair<int,int>> m_terminal_rows; ///< element → (first_row, nsub)
+		QVector<QPointer<Element>> m_display_order;  ///< visible terminals in sorted order
 };
 
 #endif // SWTERMINALSTRIPEDITOR_H
